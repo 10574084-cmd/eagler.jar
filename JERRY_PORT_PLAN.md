@@ -120,3 +120,13 @@ No playable client has been built or deployed. A Pages deployment workflow shoul
 
 The current completed milestones remain 0.1.0 and 0.2.0: a registered Jerry entity and a native 1.8 model/renderer prototype. The next safe development target is to continue the independently implemented Jerry behavior patch while keeping the public build gate closed until the base-client distribution rights and inputs are resolved.
 
+
+## Private decompilation preparation added — 2026-11-12
+
+The repository now includes:
+- `DECOMPILACION.md`: required private MCP inputs and the BuildTools init procedure.
+- `scripts/decompile-eagler-private.sh`: validates the required files and invokes BuildTools `init` in the supplied Eagler working directory.
+- `.gitignore`: excludes the local MCP/Minecraft inputs and generated decompilation outputs.
+- Root `README.md`: links to the private decompilation instructions.
+
+The decompiled Minecraft source itself was not added to this public repository. The supplied upstream Eagler archive explicitly excludes the decompiled game source, MCP configuration, and reconstruction data; its build process expects user-provided local inputs. The new script does not upload or commit generated sources. Its shell syntax and missing-input guard are checked separately; the full decompilation has not yet run because the three required files are not present in the repository or in this session.
