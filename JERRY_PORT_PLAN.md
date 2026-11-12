@@ -44,3 +44,27 @@ The technically realistic first target is a limited core entity: a Jerry-style c
 ## Rights gate
 
 The mod metadata declares `All Rights Reserved`. Do not copy its decompiled source, meshes, voice recordings, or sounds into a redistributable build without explicit permission from the rights holders. A fresh implementation with original/authorized model, texture, and sound assets is the alternative.
+
+
+## Findings from core bytecode signature audit (2026-11-12)
+
+The signature-only audit identified the original mod's main architecture:
+
+- Main entity `com.pkfl.jerry.entity.companion` extends Minecraft 1.20.1 `TamableAnimal` and implements the mod's custom GeoEntity animation interface.
+- Its synchronized state is extensive: activity, expression, stage, phase, attention, listening, crawling, voice response, scene pose, chest hiding/rummaging, puppy behavior, warning targets, and other story state.
+- Renderer `com.pkfl.jerry.client.canine` extends a bundled GeoEntityRenderer and contains additional rendering paths for reactions, feints, chest-food behavior, and visibility.
+- The main mod class uses Forge DeferredRegister objects for entities, blocks, and block entities.
+- Core classes embed a notice stating that copying, modifying, or porting requires written permission. The user has confirmed permission in this conversation; retain the rights-holder authorization before using original source or assets in a distributed build.
+- Many mesh and texture resources are held in private binary asset paths rather than loose PNG/JSON model files.
+
+This confirms that 0.1.0 is a native compatibility stub, not a source-level port of Jerry's original AI or renderer. It reuses Eagler 1.8's wolf behavior and render fallback so the new entity can be registered and tested first.
+
+## Revised implementation milestones
+
+1. **0.1.0 — registered entity stub:** source patch and Java syntax smoke test completed. Jerry currently appears as a named wolf.
+2. **0.2 — native 1.8 model and renderer:** create independent Eagler 1.8 model/renderer classes and an authorized or original texture. Do not depend on the mod's modern Geo renderer.
+3. **0.3 — dog behavior:** implement a selected subset of behavior using 1.8 AI/task APIs: idle, follow, look-at-player, sit/stay, and simple interactions.
+4. **0.4 — optional content:** add sounds and more advanced behavior after resource compatibility and rights are checked.
+5. **0.5 — full client integration:** requires the actual Eagler BuildTools workspace inputs (Minecraft 1.8/MCP initialization artifacts and resources), which are not present in the supplied ZIP. Build and test on that complete workspace.
+
+The browser output is a modified Eagler client build, not a Forge-style plugin JAR. The current deliverable is a BuildTools source-patch ZIP, not a playable client or an installable `.eagler` add-on.
