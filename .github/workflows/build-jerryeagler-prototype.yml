@@ -124,7 +124,7 @@ jobs:
               '+        this.entityRenderMap.put(net.minecraft.entity.passive.EntityJerry.class, new net.minecraft.client.renderer.entity.RenderJerry(this, new net.minecraft.client.model.ModelJerry(), 0.5F));',
               ''
           ]
-          render_patched = '\\n'.join(render_lines) + '\\n'
+          render_patched = '\n'.join(render_lines) + '\n'
           render_manager.write_text(render_patched, encoding='utf-8')
           # Verify that the Eagler BuildTools implementation supports source-file recreation.
           diffset = root / 'buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/diff/DiffSet.java'
@@ -163,7 +163,7 @@ jobs:
               '- This does not compile the complete Eagler workspace or produce a playable client; exact Eagler 1.8.8 patch application still needs the full MCP workspace.',
               ''
           ]
-          Path('prepared/JERRY_PATCH_VALIDATION.md').write_text('\\n'.join(report), encoding='utf-8')
+          Path('prepared/JERRY_PATCH_VALIDATION.md').write_text('\n'.join(report), encoding='utf-8')
 
           package_root = Path('prepared/JerryEagler')
           for relative, source in source_files.items():
