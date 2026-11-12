@@ -125,7 +125,7 @@ jobs:
               ''
           ]
           render_patched = '\\n'.join(render_lines) + '\\n'
-          render_manager.write_text(render_patched, encoding='utf-8', newline='\\n')
+          render_manager.write_text(render_patched, encoding='utf-8')
           # Verify that the Eagler BuildTools implementation supports source-file recreation.
           diffset = root / 'buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/diff/DiffSet.java'
           apply_zip = root / 'buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/diff/ApplyPatchesToZip.java'
