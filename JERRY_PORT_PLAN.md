@@ -92,3 +92,31 @@ Current visual/gameplay state:
 - The texture remains the vanilla wolf texture; the model still starts from the 1.8 wolf model.
 - Entity movement and AI still inherit from `EntityWolf`.
 - No playable browser client or `.eagler` runtime add-on has been built yet.
+
+## GitHub Pages build readiness — 2026-11-12
+
+The separate Actions workflow .github/workflows/inspect-eagler-build.yml successfully inspected the supplied source archive (run 43296104615). The archive checksum matched the pinned SHA-256. This is a diagnostic workflow; it does not publish a client.
+
+### Confirmed build inputs
+
+- The archive includes buildtools/BuildTools.jar, and that JAR contains CompileLatestClientHeadless.
+- The production HTML template is sources/setup/workspace_template/javascript/index.html; the template favicon is sources/setup/workspace_template/javascript/favicon.png.
+- The headless compiler accepts a JSON config with repositoryFolder, modCoderPack, minecraftJar, assetsIndex, outputDirectory, and mavenLocal. It also supports productionIndex, productionFavicon, mavenURL, temporaryDirectory, and other optional settings.
+- TeaVM 0.9.2 dependencies can be downloaded by the build tool from a Maven repository.
+
+### Missing base inputs
+
+The supplied archive's mcp918 directory contains only assetsIndexTransformer.json and readme.txt. Its own readme.txt instructs the user to supply three additional files for initialization:
+
+- mcp918.zip — MCP 1.8.8 package
+- 1.8.8.jar — Minecraft 1.8.8 client JAR
+- 1.8.json — Minecraft 1.8 asset index
+
+These three files are not present in the public source archive, so the current workflow cannot yet produce index.html, classes.js, or assets.epk. Do not place licensed Minecraft files or other restricted base assets in this public repository or expose them as public Pages artifacts.
+
+### Pages deployment gate
+
+No playable client has been built or deployed. A Pages deployment workflow should only be enabled once the project has a lawful, authorized source/build input set and explicit rights to publish the resulting client and its assets. The Jerry mod's permission does not, by itself, grant rights to redistribute Minecraft or Eaglercraft materials.
+
+The current completed milestones remain 0.1.0 and 0.2.0: a registered Jerry entity and a native 1.8 model/renderer prototype. The next safe development target is to continue the independently implemented Jerry behavior patch while keeping the public build gate closed until the base-client distribution rights and inputs are resolved.
+
