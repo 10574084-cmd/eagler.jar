@@ -1,31 +1,24 @@
-# JerryEagler prototype — 0.1
+# JerryEagler prototype — 0.2
 
-This folder contains an initial Minecraft 1.8/Eaglercraft source patch.
+This folder contains a native Minecraft 1.8/Eaglercraft source patch.
 
 ## Included
 
-- A new `EntityJerry` class, created through Eagler BuildTools' `.recreate.java` patch mechanism.
-- The entity is registered under the name `JerryEagler` with unused legacy entity ID `102`.
-- It inherits the existing 1.8 wolf implementation for movement, AI, health, collision, and rendering fallback.
-- The entity displays the name tag `Jerry`.
+- A new `EntityJerry` class, created through Eagler BuildTools' `.recreate.java` mechanism.
+- Entity registration as `JerryEagler`, using numeric ID `102`.
+- A new `ModelJerry` class based on the Minecraft 1.8 wolf model with small independent pose adjustments.
+- A new `RenderJerry` class using the Minecraft 1.8 living-entity renderer.
+- A RenderManager map entry for the dedicated Jerry renderer.
 
 ## Current limitations
 
-- This prototype deliberately uses the vanilla wolf renderer and texture. It is a compatibility milestone, not the final visual port.
-- No original Jerry meshes, textures, voices, shader effects, dimensions, or cinematic assets are included yet.
-- Forge 1.20.1 classes and mixins are not loaded. The entity is compiled into a modified Eaglercraft 1.8 client.
-- Eaglercraft does not natively install Forge JAR files as browser mods. A completed distribution will be a custom Eaglercraft client build, not a normal Forge JAR.
+- The model still uses the vanilla wolf texture as a placeholder. It is not the original Jerry appearance.
+- Movement, health, collision, and most AI still come from Eagler 1.8's `EntityWolf`.
+- The original Forge 1.20.1 Geo renderer, mixins, and custom animation engine are not loaded.
+- No original voice recordings, meshes, textures, dimensions, shaders, or cinematic assets are included.
+- The RenderManager insertion is anchored to the vanilla 1.8 constructor's wolf renderer registration. A complete application against the target Eagler 1.8.8 workspace is still required to verify the exact base-source context.
+- The workflow syntax-checks the new Java classes against minimal 1.8 API stubs. It does not compile the full Minecraft client or generate a playable build.
 
-## Apply
+## Target
 
-The preparation workflow downloads the user-provided Eaglercraft source ZIP, copies this folder's patch into `patches/minecraft`, and adds the registry entry to Eagler's existing EntityList context patch. It checks the patch structure and Java syntax in CI.
-
-A full Eagler client build still requires the Minecraft 1.8/MCP workspace inputs that the upstream Eagler source archive does not contain. This prototype workflow does not claim to compile a playable client.
-
-## Spawn
-
-After the source patch is integrated into a successfully built client, try:
-
-```
-/summon JerryEagler
-```
+This is a BuildTools patch overlay for a modified Eaglercraft client. It is not a Forge mod JAR and is not an installable browser add-on.
