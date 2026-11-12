@@ -190,3 +190,65 @@ jobs:
             git commit -m 'Add Eagler entity patch integration audit'
             git push origin jerryeagler-analysis
           fi
+
+      - name: Inspect BuildTools patch application and source overlay rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile, re
+          from pathlib import Path
+          zp = '/tmp/jerryeagler/eagler-main.zip'
+          out = []
+          def add(s=''): out.append(str(s))
+          def sec(s): add('\\n## ' + s + '\\n')
+          with zipfile.ZipFile(zp) as z:
+              names = [n for n in z.namelist() if not n.endswith('/')]
+              add('# Eagler BuildTools patch format and source layout audit')
+              add('- Files in ZIP: %d' % len(names))
+              sec('Top-level directories')
+              roots = sorted({n.split('/')[1] for n in names if n.startswith('eagler-main/') and len(n.split('/')) > 2})
+              for n in roots: add('- ' + n)
+              sec('Source roots and Java files outside patches/buildtools')
+              java = [n for n in names if n.endswith('.java')]
+              others = [n for n in java if '/patches/' not in n and '/buildtools/' not in n]
+              add('- Java files outside patches/buildtools: %d' % len(others))
+              for n in others[:300]: add('- ' + n)
+              sec('Source/build configuration paths')
+              patterns = ('gradle', 'build.xml', 'build.gradle', 'settings.gradle', 'mcp', 'workspace', 'src/main', 'sources/', 'minecraft.json')
+              for n in names:
+                  if any(p in n.lower() for p in patterns) and not n.endswith(('.class','.jar','.png','.dll','.so')):
+                      add('- ' + n)
+              sec('BuildTools patch implementation files')
+              wanted = [
+                'eagler-main/buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/diff/DiffSet.java',
+                'eagler-main/buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/diff/ApplyPatchesToZip.java',
+                'eagler-main/buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/init/SetupWorkspace.java',
+                'eagler-main/buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/init/CreateUnpatched.java',
+                'eagler-main/buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/init/DecompileMinecraft.java'
+              ]
+              for n in wanted:
+                  if n not in names: continue
+                  add('### ' + n)
+                  lines = z.read(n).decode('utf-8','replace').splitlines()
+                  hits = [i for i,ln in enumerate(lines) if any(k in ln.lower() for k in ('recreate','edit.java','patches','patchfile','source','new file','createfile','outputdir','getpatch'))]
+                  chosen = set()
+                  for i in hits[:100]:
+                      chosen.update(range(max(0,i-8),min(len(lines),i+15)))
+                  for i in sorted(chosen): add('%d: %s' % (i+1, lines[i]))
+              sec('Patch inventory summary')
+              for ext in ('.edit.java','.recreate.java','.delete','.ebp'):
+                  matches = [n for n in names if n.endswith(ext)]
+                  add('- %s: %d' % (ext,len(matches)))
+                  for n in matches[:30]: add('  - ' + n)
+          Path('EAGLER_PATCH_FORMAT.md').write_text('\\n'.join(out) + '\\n',encoding='utf-8')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add EAGLER_PATCH_FORMAT.md
+          if git diff --cached --quiet; then
+            echo 'No patch format report changes.'
+          else
+            git commit -m 'Document Eagler BuildTools source and patch format'
+            git push origin jerryeagler-analysis
+          fi
