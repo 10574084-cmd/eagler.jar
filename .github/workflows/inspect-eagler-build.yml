@@ -31,6 +31,8 @@ jobs:
           echo '6dd5070cb6b3743e4437f52183d8083019b62d8fa74bf84d55f2d397897d1c5c  eagler-main.zip' | sha256sum --check
           mkdir -p inspect
           unzip -q eagler-main.zip -d inspect
+          echo "Extracted archive roots:"
+          find inspect -mindepth 1 -maxdepth 2 -type d | head -80
 
       - name: Inspect BuildTools CLI, MCP inputs, and build scripts
         shell: bash
@@ -40,10 +42,11 @@ jobs:
           from pathlib import Path
           import re
 
-          roots = [p for p in Path('inspect').iterdir() if p.is_dir()]
-          if len(roots) != 1:
-              raise SystemExit('Expected one extracted source root; found: ' + ', '.join(str(p) for p in roots))
-          root = roots[0]
+          inspect_root = Path('inspect')
+          buildtools_dirs = [p for p in inspect_root.rglob('buildtools') if p.is_dir()]
+          if len(buildtools_dirs) != 1:
+              raise SystemExit('Expected exactly one buildtools directory; found: ' + ', '.join(str(p) for p in buildtools_dirs))
+          root = buildtools_dirs[0].parent
           out = []
           def add(value=''):
               out.append(str(value))
@@ -54,7 +57,7 @@ jobs:
 
           add('# Eagler build environment inspection')
           add()
-          add('This report checks the supplied source archive without downloading Minecraft binaries or publishing a client.')
+          add('This report inspects the supplied source archive. It does not download Minecraft binaries or publish a client.')
           add('- Extracted root: ' + str(root))
           add('- Top-level entries: ' + ', '.join(sorted(p.name for p in root.iterdir())))
 
@@ -73,12 +76,11 @@ jobs:
           section('Build and initialization scripts')
           script_names = ('build_init.sh', 'build_make_workspace.sh', 'build_init.bat', 'build_make_workspace.bat', 'README.md', 'README.txt')
           for name in script_names:
-              matches = list(root.rglob(name))
-              for p in matches[:5]:
+              for p in list(root.rglob(name))[:5]:
                   add('### ' + p.relative_to(root).as_posix())
                   try:
                       lines = p.read_text(encoding='utf-8', errors='replace').splitlines()
-                      add('\\n'.join(lines[:180]))
+                      add('\n'.join(lines[:180]))
                   except Exception as exc:
                       add('Read error: ' + str(exc))
 
@@ -95,7 +97,7 @@ jobs:
               lines = p.read_text(encoding='utf-8', errors='replace').splitlines()
               selected = set()
               for i, line in enumerate(lines):
-                  if re.search(r'public static void main|public static boolean|case "|args\\[|getProperty|MinecraftSrc|ModCoderPack|CompileLatestClientHeadless|BuildTools', line):
+                  if re.search(r'public static void main|public static boolean|case "|args\[|getProperty|MinecraftSrc|ModCoderPack|CompileLatestClientHeadless|BuildTools', line):
                       selected.update(range(max(0, i-5), min(len(lines), i+12)))
               for i in sorted(selected)[:700]:
                   add('%d: %s' % (i+1, lines[i]))
@@ -131,8 +133,8 @@ jobs:
           for path, line_no, line in hits:
               add('- %s:%d — %s' % (path, line_no, line))
 
-          Path('EAGLER_BUILD_ENV_REPORT.md').write_text('\\n'.join(out) + '\\n', encoding='utf-8')
-          print('\\n'.join(out))
+          Path('EAGLER_BUILD_ENV_REPORT.md').write_text('\n'.join(out) + '\n', encoding='utf-8')
+          print('\n'.join(out))
           PY
 
       - name: Upload build environment report
