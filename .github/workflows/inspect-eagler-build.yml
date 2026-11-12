@@ -1,0 +1,196 @@
+name: Inspect Eagler web build environment
+
+on:
+  push:
+    branches:
+      - jerryeagler-analysis
+    paths:
+      - ".github/workflows/inspect-eagler-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-build-inputs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout analysis branch
+        uses: actions/checkout@v4
+        with:
+          ref: jerryeagler-analysis
+
+      - name: Download and verify Eagler source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 3 \
+            'https://github.com/10574084-cmd/eagler.jar/releases/download/CLAUDEORGROK/eagler-main.zip' \
+            -o eagler-main.zip
+          echo '6dd5070cb6b3743e4437f52183d8083019b62d8fa74bf84d55f2d397897d1c5c  eagler-main.zip' | sha256sum --check
+          mkdir -p inspect
+          unzip -q eagler-main.zip -d inspect
+          echo "Extracted archive roots:"
+          find inspect -mindepth 1 -maxdepth 2 -type d | head -80
+
+      - name: Inspect BuildTools CLI, MCP inputs, and build scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          inspect_root = Path('inspect')
+          mcp_dirs = [p for p in inspect_root.rglob('mcp918') if p.is_dir()]
+          if len(mcp_dirs) != 1:
+              raise SystemExit('Expected exactly one mcp918 directory; found: ' + ', '.join(str(p) for p in mcp_dirs))
+          root = mcp_dirs[0].parent
+          out = []
+          def add(value=''):
+              out.append(str(value))
+          def section(value):
+              add()
+              add('## ' + value)
+              add()
+
+          add('# Eagler build environment inspection')
+          add()
+          add('This report inspects the supplied source archive. It does not download Minecraft binaries or publish a client.')
+          add('- Extracted root: ' + str(root))
+          add('- Top-level entries: ' + ', '.join(sorted(p.name for p in root.iterdir())))
+
+          section('MCP 1.8.8 folder inventory')
+          mcp = root / 'mcp918'
+          files = sorted(p for p in mcp.rglob('*') if p.is_file())
+          add('- Files: %d' % len(files))
+          for p in files[:250]:
+              add('- ' + p.relative_to(root).as_posix() + ' (%d bytes)' % p.stat().st_size)
+          if len(files) > 250:
+              add('- ... %d additional files omitted' % (len(files) - 250))
+
+          section('Build and initialization scripts')
+          script_names = ('build_init.sh', 'build_make_workspace.sh', 'build_init.bat', 'build_make_workspace.bat', 'README.md', 'README.txt')
+          for name in script_names:
+              for p in list(root.rglob(name))[:5]:
+                  add('### ' + p.relative_to(root).as_posix())
+                  try:
+                      lines = p.read_text(encoding='utf-8', errors='replace').splitlines()
+                      add('\n'.join(lines[:180]))
+                  except Exception as exc:
+                      add('Read error: ' + str(exc))
+
+          section('BuildTools command entry points')
+          candidates = [
+              root / 'buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/EaglerBuildTools.java',
+              root / 'buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/gui/headless/CompileLatestClientHeadless.java'
+          ]
+          for p in candidates:
+              if not p.is_file():
+                  add('MISSING: ' + p.relative_to(root).as_posix())
+                  continue
+              add('### ' + p.relative_to(root).as_posix())
+              lines = p.read_text(encoding='utf-8', errors='replace').splitlines()
+              selected = set()
+              for i, line in enumerate(lines):
+                  if re.search(r'public static void main|public static boolean|case "|args\[|getProperty|MinecraftSrc|ModCoderPack|CompileLatestClientHeadless|BuildTools', line):
+                      selected.update(range(max(0, i-5), min(len(lines), i+12)))
+              for i in sorted(selected)[:700]:
+                  add('%d: %s' % (i+1, lines[i]))
+
+          section('Java/TeaVM build configuration files')
+          patterns = ('*.gradle', 'gradlew', 'pom.xml', 'build.xml', 'Makefile')
+          found = set()
+          for pattern in patterns:
+              for p in root.rglob(pattern):
+                  if any(part in ('buildtools', 'sources') for part in p.parts):
+                      found.add(p.relative_to(root).as_posix())
+          for name in sorted(found)[:250]:
+              add('- ' + name)
+
+          section('Headless compile config and initialization code excerpts')
+          detail_specs = [
+              ('buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/gui/headless/CompileLatestClientHeadless.java', [(80, 220), (260, 360), (380, 530)]),
+              ('buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/init/InitTask.java', [(35, 150)]),
+              ('mcp918/readme.txt', [(1, 80)]),
+              ('CompileLatestClient.sh', [(1, 80)]),
+              ('CompileLatestClient.bat', [(1, 80)])
+          ]
+          for rel, ranges in detail_specs:
+              p = root / rel
+              if not p.is_file():
+                  add('MISSING: ' + rel)
+                  continue
+              add('### ' + rel)
+              lines = p.read_text(encoding='utf-8', errors='replace').splitlines()
+              for start, end in ranges:
+                  add('Lines %d-%d:' % (start, end))
+                  add('\n'.join('%d: %s' % (i+1, lines[i]) for i in range(start-1, min(end, len(lines)))))
+          section('BuildTools packaged binaries')
+          for p in sorted((root / 'buildtools').rglob('*.jar')):
+              add('- %s (%d bytes)' % (p.relative_to(root).as_posix(), p.stat().st_size))
+
+          section('Headless GUI config examples and TeaVM dependency loader')
+          extra_specs = [
+              ('buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/gui/CompileLatestClientGUI.java', [(100, 260)]),
+              ('buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/gui/TeaVMBinaries.java', [(1, 260)]),
+              ('buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/gui/MakeOfflineDownload.java', [(1, 140)])
+          ]
+          for rel, ranges in extra_specs:
+              p = root / rel
+              if not p.is_file():
+                  add('MISSING: ' + rel)
+                  continue
+              add('### ' + rel)
+              lines = p.read_text(encoding='utf-8', errors='replace').splitlines()
+              for start, end in ranges:
+                  add('Lines %d-%d:' % (start, end))
+                  add('\n'.join('%d: %s' % (i+1, lines[i]) for i in range(start-1, min(end, len(lines)))))
+          section('Production HTML and setup resource candidates')
+          setup = root / 'sources/setup'
+          if setup.is_dir():
+              for p in sorted(x for x in setup.rglob('*') if x.is_file() and (x.suffix.lower() in ('.html', '.json', '.png', '.ico') or 'production' in x.as_posix().lower())):
+                  add('- %s (%d bytes)' % (p.relative_to(root).as_posix(), p.stat().st_size))
+          else:
+              add('MISSING: sources/setup')
+          section('Packaged BuildTools class check')
+          import zipfile
+          jar = root / 'buildtools/BuildTools.jar'
+          if jar.is_file():
+              with zipfile.ZipFile(jar) as z:
+                  for name in z.namelist():
+                      if any(k in name for k in ('CompileLatestClientHeadless', 'EaglerBuildTools.class', 'TeaVMBridge')):
+                          add('- ' + name)
+          section('Minecraft initialization references')
+          hits = []
+          for p in root.rglob('*'):
+              if not p.is_file() or p.suffix.lower() not in ('.java', '.sh', '.bat', '.md', '.txt', '.json', '.properties'):
+                  continue
+              if p.stat().st_size > 2_000_000:
+                  continue
+              try:
+                  lines = p.read_text(encoding='utf-8', errors='replace').splitlines()
+              except Exception:
+                  continue
+              for i, line in enumerate(lines):
+                  if any(k in line.lower() for k in ('minecraftsrc.zip', 'minecraft_src.jar', 'minecraft_res.jar', 'mcp918', 'modcoderpack', 'minecraft version 1.8.8', 'compilelatestclientheadless')):
+                      hits.append((p.relative_to(root).as_posix(), i+1, line.strip()[:240]))
+                      if len(hits) >= 500:
+                          break
+              if len(hits) >= 500:
+                  break
+          for path, line_no, line in hits:
+              add('- %s:%d — %s' % (path, line_no, line))
+
+          Path('EAGLER_BUILD_ENV_REPORT.md').write_text('\n'.join(out) + '\n', encoding='utf-8')
+          print('\n'.join(out))
+          PY
+
+      - name: Upload build environment report
+        uses: actions/upload-artifact@v4
+        with:
+          name: eagler-build-env-report
+          path: EAGLER_BUILD_ENV_REPORT.md
+          if-no-files-found: error
+          retention-days: 14

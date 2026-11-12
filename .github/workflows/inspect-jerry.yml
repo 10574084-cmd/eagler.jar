@@ -1,0 +1,310 @@
+name: Inspect Jerry and Eagler sources
+on:
+  push:
+    branches:
+      - jerryeagler-analysis
+    paths:
+      - .github/workflows/inspect-jerry.yml
+permissions:
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout analysis branch
+        uses: actions/checkout@v4
+        with:
+          ref: jerryeagler-analysis
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download Jerry JAR and verify checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/jerryeagler
+          curl --fail --location --retry 3 --retry-delay 3 'https://github.com/10574084-cmd/eagler.jar/releases/download/CLAUDEORGROK/jerry.jar.jar' -o /tmp/jerryeagler/jerry.jar
+          echo 'db4e534a5fea9e51d55bf7c4f1969ffaf2dad4c22dfd8732c1875e92360cfdb8  /tmp/jerryeagler/jerry.jar' | sha256sum --check
+      - name: Decompile privately for structural audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 'https://repo1.maven.org/maven2/org/benf/cfr/0.152/cfr-0.152.jar' -o /tmp/jerryeagler/cfr.jar
+          java -Xmx4g -jar /tmp/jerryeagler/cfr.jar /tmp/jerryeagler/jerry.jar --outputdir /tmp/jerryeagler/decompiled --silent true
+      - name: Inspect core Jerry bytecode signatures and related resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/jerryeagler/api
+          for cls in com.pkfl.jerry.jerry com.pkfl.jerry.entity.companion com.pkfl.jerry.client.canine com.pkfl.jerry.entity.cub com.pkfl.jerry.entity.hound; do
+            safe=$(echo "$cls" | tr '.' '_')
+            javap -classpath /tmp/jerryeagler/jerry.jar -p -s -constants "$cls" > "/tmp/jerryeagler/api/$safe.txt" 2>&1 || true
+          done
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          api = Path('/tmp/jerryeagler/api')
+          out = [
+              '# Jerry core bytecode API audit',
+              '',
+              'This is a signature-only inspection of the supplied JAR. No method bodies or decompiled source are included.',
+              ''
+          ]
+          for p in sorted(api.glob('*.txt')):
+              out.append('## ' + p.stem.replace('_','.'))
+              txt = p.read_text(encoding='utf-8', errors='replace').splitlines()
+              keep = []
+              for ln in txt:
+                  if any(k in ln for k in ('Compiled from', 'public class ', 'final class ', 'abstract class ', 'extends ', 'implements ', 'public static ', 'public ', 'protected ', 'private ', 'descriptor:')):
+                      keep.append(ln)
+              out.extend(keep[:180])
+              out.append('')
+          with zipfile.ZipFile('/tmp/jerryeagler/jerry.jar') as z:
+              names = [n for n in z.namelist() if not n.endswith('/')]
+              related = [n for n in names if n.startswith('assets/jerry/') and any(k in n.lower() for k in ('jerry','canine','companion','dog','wolf','entity','geo','mesh','texture','pixel','animation'))]
+              out.append('## Resource paths likely related to Jerry, canine models, or animation')
+              out.append('')
+              for n in sorted(related):
+                  out.append('- ' + n)
+              out.append('')
+              out.append('## Resource summary')
+              out.append('- Related resource paths found: %d' % len(related))
+              ext_counts = {}
+              for n in related:
+                  ext = Path(n).suffix.lower() or '(none)'
+                  ext_counts[ext] = ext_counts.get(ext, 0) + 1
+              for ext, count in sorted(ext_counts.items()):
+                  out.append('- %s: %d' % (ext, count))
+          Path('JERRY_CORE_API.md').write_text('\\n'.join(out) + '\\n', encoding='utf-8')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add JERRY_CORE_API.md
+          if git diff --cached --quiet; then
+            echo 'No core API audit changes.'
+          else
+            git commit -m 'Add Jerry core entity and renderer API audit'
+            git push origin jerryeagler-analysis
+          fi
+
+      - name: Create sanitized class and mixin audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile, json, re
+          from pathlib import Path
+          jar_path = Path('/tmp/jerryeagler/jerry.jar')
+          dec = Path('/tmp/jerryeagler/decompiled')
+          out = []
+          def add(s=''): out.append(str(s))
+          def section(s): add('\\n## ' + s + '\\n')
+
+          with zipfile.ZipFile(jar_path) as z:
+              names = [n for n in z.namelist() if not n.endswith('/')]
+              classes = sorted(n[:-6].replace('/', '.') for n in names if n.endswith('.class'))
+              add('# Jerry JAR — class and integration audit')
+              add()
+              add('- Archive bytecode classes: %d' % len(classes))
+              add('- Decompiled Java files: %d' % len(list(dec.rglob('*.java'))))
+              section('Mixin configuration')
+              mixins = [n for n in names if n.endswith('.mixins.json')]
+              for n in mixins:
+                  add('### ' + n)
+                  try:
+                      obj = json.loads(z.read(n).decode('utf-8', 'replace'))
+                      add('\\x60\\x60\\x60json')
+                      add(json.dumps(obj, indent=2)[:12000])
+                      add('\\x60\\x60\\x60')
+                  except Exception as e: add('Read error: ' + str(e))
+              section('Class inventory')
+              for n in classes: add('- \\x60' + n + '\\x60')
+
+          section('Feature-relevant class names')
+          terms = ('mod','entity','jerry','dog','wolf','cat','mob','ai','goal','renderer','render','model','sound','voice','dimension','world','block','item','screen','client','server','mixin','network','registry','shader','camera','animation')
+          selected = [n for n in classes if any(t in n.lower() for t in terms)]
+          for n in selected: add('- \\x60' + n + '\\x60')
+
+          section('Entrypoints, mixin declarations, and registry indicators')
+          java_files = sorted(dec.rglob('*.java'))
+          needles = ('@Mod(', '@Mixin(', 'DeferredRegister', 'RegistryObject', 'EntityType.Builder', 'EntityRenderer', 'ModelLayerLocation', 'SoundEvent', 'SpawnPlacements', 'RegisterEvent', 'RegisterCommandsEvent')
+          hits = []
+          for fp in java_files:
+              try: lines = fp.read_text(encoding='utf-8', errors='replace').splitlines()
+              except Exception: continue
+              for idx, ln in enumerate(lines):
+                  if any(k in ln for k in needles):
+                      hits.append((str(fp.relative_to(dec)), idx + 1, ln.strip()))
+          for fp, lnno, ln in hits[:250]:
+              add('- \\x60%s:%d\\x60 — %s' % (fp, lnno, ln[:220]))
+          if len(hits) > 250: add('- ... %d additional indicator matches omitted' % (len(hits)-250))
+
+          section('Resource path inventory')
+          with zipfile.ZipFile(jar_path) as z:
+              resources = [n for n in z.namelist() if n.startswith('assets/jerry/') and not n.endswith('/')]
+              for n in sorted(resources): add('- \\x60' + n + '\\x60')
+
+          section('Portability assessment')
+          add('- The metadata identifies a Forge 1.20.1 mod with Mixin configuration. These hooks and APIs do not load directly in Eaglercraft 1.8.')
+          add('- This file is a structural audit only: it does not include decompiled method bodies or copy source/assets.')
+          add('- The practical target should be scoped to the core Jerry entity and its core behavior first. Mod-specific dimensions, custom post-processing shaders, native voice/model dependencies, cinematic data, and Mixin-only hooks require separate feasibility review.')
+          Path('JERRY_CLASS_AUDIT.md').write_text('\\n'.join(out) + '\\n', encoding='utf-8')
+          PY
+      - name: Publish audits to analysis branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add JERRY_CLASS_AUDIT.md
+          if git diff --cached --quiet; then
+            echo 'No audit changes.'
+          else
+            git commit -m 'Add Jerry class and mixin compatibility audit'
+            git push origin jerryeagler-analysis
+          fi
+      - name: Upload sanitized audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: jerryeagler-class-audit
+          path: JERRY_CLASS_AUDIT.md
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Download Eagler source ZIP and inspect entity patch format
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 3 'https://github.com/10574084-cmd/eagler.jar/releases/download/CLAUDEORGROK/eagler-main.zip' -o /tmp/jerryeagler/eagler-main.zip
+          echo '6dd5070cb6b3743e4437f52183d8083019b62d8fa74bf84d55f2d397897d1c5c  /tmp/jerryeagler/eagler-main.zip' | sha256sum --check
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          zpath = '/tmp/jerryeagler/eagler-main.zip'
+          out = []
+          def add(s=''): out.append(str(s))
+          def sec(s): add('\\n## ' + s + '\\n')
+          with zipfile.ZipFile(zpath) as z:
+              names = [n for n in z.namelist() if not n.endswith('/')]
+              add('# Eaglercraft entity patch integration audit')
+              add()
+              add('This report inspects only the user-provided Eaglercraft source archive.')
+              add('- Files in ZIP: %d' % len(names))
+              sec('Relevant entity and renderer patch paths')
+              terms = ('EntityList', 'RenderManager', 'EntityWolf', 'ModelWolf', 'RenderWolf', 'EntityOcelot', 'RenderOcelot', 'ModelOcelot')
+              selected = [n for n in names if any(t.lower() in n.lower() for t in terms)]
+              for n in selected: add('- ' + n)
+              sec('Patch file formats')
+              for ext in ('.edit.java', '.recreate.java', '.delete'):
+                  matches = [n for n in names if n.endswith(ext)]
+                  add('- %s: %d' % (ext, len(matches)))
+                  for n in matches[:20]: add('  - ' + n)
+              sec('Top-level README')
+              readmes = [n for n in names if n.lower().endswith('readme.md')]
+              for n in readmes[:5]:
+                  add('### ' + n)
+                  try:
+                      txt = z.read(n).decode('utf-8', 'replace')
+                      add(txt[:18000])
+                  except Exception as e: add(str(e))
+              sec('EntityList / RenderManager / wolf patch excerpts')
+              for n in selected:
+                  if n.endswith(('.java', '.ebp')):
+                      add('### ' + n)
+                      try:
+                          txt = z.read(n).decode('utf-8', 'replace')
+                          add(txt[:24000])
+                      except Exception as e: add('Could not decode: ' + str(e))
+              sec('Example recreate patches')
+              recreates = sorted(n for n in names if n.endswith('.recreate.java'))
+              for n in recreates[:8]:
+                  add('### ' + n)
+                  try:
+                      add(z.read(n).decode('utf-8', 'replace')[:3500])
+                  except Exception as e: add(str(e))
+              sec('DiffSet implementation clues')
+              diffsets = [n for n in names if n.endswith('/DiffSet.java')]
+              for n in diffsets[:3]:
+                  add('### ' + n)
+                  txt = z.read(n).decode('utf-8', 'replace').splitlines()
+                  hits = [i for i, ln in enumerate(txt) if 'recreate' in ln.lower() or 'edit.java' in ln.lower() or 'patch' in ln.lower()]
+                  chosen = set()
+                  for i in hits[:25]:
+                      chosen.update(range(max(0, i-5), min(len(txt), i+8)))
+                  for i in sorted(chosen): add('%d: %s' % (i+1, txt[i]))
+          Path('EAGLER_ENTITY_INTEGRATION.md').write_text('\\n'.join(out) + '\\n', encoding='utf-8')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add EAGLER_ENTITY_INTEGRATION.md
+          if git diff --cached --quiet; then
+            echo 'No Eagler integration report changes.'
+          else
+            git commit -m 'Add Eagler entity patch integration audit'
+            git push origin jerryeagler-analysis
+          fi
+
+      - name: Inspect BuildTools patch application and source overlay rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile, re
+          from pathlib import Path
+          zp = '/tmp/jerryeagler/eagler-main.zip'
+          out = []
+          def add(s=''): out.append(str(s))
+          def sec(s): add('\\n## ' + s + '\\n')
+          with zipfile.ZipFile(zp) as z:
+              names = [n for n in z.namelist() if not n.endswith('/')]
+              add('# Eagler BuildTools patch format and source layout audit')
+              add('- Files in ZIP: %d' % len(names))
+              sec('Top-level directories')
+              roots = sorted({n.split('/')[1] for n in names if n.startswith('eagler-main/') and len(n.split('/')) > 2})
+              for n in roots: add('- ' + n)
+              sec('Source roots and Java files outside patches/buildtools')
+              java = [n for n in names if n.endswith('.java')]
+              others = [n for n in java if '/patches/' not in n and '/buildtools/' not in n]
+              add('- Java files outside patches/buildtools: %d' % len(others))
+              for n in others[:300]: add('- ' + n)
+              sec('Source/build configuration paths')
+              patterns = ('gradle', 'build.xml', 'build.gradle', 'settings.gradle', 'mcp', 'workspace', 'src/main', 'sources/', 'minecraft.json')
+              for n in names:
+                  if any(p in n.lower() for p in patterns) and not n.endswith(('.class','.jar','.png','.dll','.so')):
+                      add('- ' + n)
+              sec('BuildTools patch implementation files')
+              wanted = [
+                'eagler-main/buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/diff/DiffSet.java',
+                'eagler-main/buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/diff/ApplyPatchesToZip.java',
+                'eagler-main/buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/init/SetupWorkspace.java',
+                'eagler-main/buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/init/CreateUnpatched.java',
+                'eagler-main/buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/init/DecompileMinecraft.java'
+              ]
+              for n in wanted:
+                  if n not in names: continue
+                  add('### ' + n)
+                  lines = z.read(n).decode('utf-8','replace').splitlines()
+                  hits = [i for i,ln in enumerate(lines) if any(k in ln.lower() for k in ('recreate','edit.java','patches','patchfile','source','new file','createfile','outputdir','getpatch'))]
+                  chosen = set()
+                  for i in hits[:100]:
+                      chosen.update(range(max(0,i-8),min(len(lines),i+15)))
+                  for i in sorted(chosen): add('%d: %s' % (i+1, lines[i]))
+              sec('Patch inventory summary')
+              for ext in ('.edit.java','.recreate.java','.delete','.ebp'):
+                  matches = [n for n in names if n.endswith(ext)]
+                  add('- %s: %d' % (ext,len(matches)))
+                  for n in matches[:30]: add('  - ' + n)
+          Path('EAGLER_PATCH_FORMAT.md').write_text('\\n'.join(out) + '\\n',encoding='utf-8')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add EAGLER_PATCH_FORMAT.md
+          if git diff --cached --quiet; then
+            echo 'No patch format report changes.'
+          else
+            git commit -m 'Document Eagler BuildTools source and patch format'
+            git push origin jerryeagler-analysis
+          fi
