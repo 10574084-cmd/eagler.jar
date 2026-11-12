@@ -166,10 +166,11 @@ jobs:
               public void setAlwaysRenderNameTag(boolean value) {}
           }
           JAVA
+          cp prepared/JerryEagler/patches/minecraft/net/minecraft/entity/passive/EntityJerry.recreate.java smoke/src/net/minecraft/entity/passive/EntityJerry.java
           javac -encoding UTF-8 -d smoke/classes \
             smoke/src/net/minecraft/world/World.java \
             smoke/src/net/minecraft/entity/passive/EntityWolf.java \
-            prepared/JerryEagler/patches/minecraft/net/minecraft/entity/passive/EntityJerry.recreate.java
+            smoke/src/net/minecraft/entity/passive/EntityJerry.java
           echo 'Java syntax smoke test passed against minimal Minecraft 1.8 API stubs.' >> prepared/JERRY_PATCH_VALIDATION.md
 
       - name: Create JerryEagler source patch package
