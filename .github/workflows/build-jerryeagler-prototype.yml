@@ -1,0 +1,185 @@
+name: Build JerryEagler source patch
+
+on:
+  push:
+    branches:
+      - jerryeagler-analysis
+    paths:
+      - "JerryEagler/**"
+      - ".github/workflows/build-jerryeagler-prototype.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout analysis branch
+        uses: actions/checkout@v4
+        with:
+          ref: jerryeagler-analysis
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Download and verify Eagler source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 3 \
+            'https://github.com/10574084-cmd/eagler.jar/releases/download/CLAUDEORGROK/eagler-main.zip' \
+            -o eagler-main.zip
+          echo '6dd5070cb6b3743e4437f52183d8083019b62d8fa74bf84d55f2d397897d1c5c  eagler-main.zip' | sha256sum --check
+
+      - name: Apply Jerry entity and EntityList registry patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          import zipfile
+          from pathlib import Path
+
+          archive = Path('eagler-main.zip')
+          work = Path('work')
+          if work.exists():
+              import shutil
+              shutil.rmtree(work)
+          work.mkdir()
+          with zipfile.ZipFile(archive) as z:
+              z.extractall(work)
+
+          root = work / 'eagler-main'
+          patch_root = root / 'patches' / 'minecraft'
+          source = Path('JerryEagler/patches/minecraft/net/minecraft/entity/passive/EntityJerry.recreate.java')
+          if not source.is_file():
+              raise SystemExit('Jerry entity source patch is missing')
+
+          recreate_target = patch_root / 'net/minecraft/entity/passive/EntityJerry.recreate.java'
+          recreate_target.parent.mkdir(parents=True, exist_ok=True)
+          recreate_target.write_bytes(source.read_bytes())
+
+          entity_list = patch_root / 'net/minecraft/entity/EntityList.edit.java'
+          if not entity_list.is_file():
+              raise SystemExit('Upstream EntityList.edit.java was not found in the supplied archive')
+          lines = entity_list.read_text(encoding='utf-8').splitlines()
+
+          header_re = re.compile(r'^(> CHANGE\\s+29\\s*:\\s*)97(\\s*@\\s*29\\s*:\\s*91\\s*)$')
+          header_indexes = [i for i, line in enumerate(lines) if header_re.match(line)]
+          if len(header_indexes) != 1:
+              raise SystemExit('Expected exactly one EntityList mapping hunk header (CHANGE 29:97 @ 29:91); found %d' % len(header_indexes))
+          h = header_indexes[0]
+          lines[h] = header_re.sub(r'\\g<1>98\\g<2>', lines[h])
+
+          if any('JerryEagler' in line for line in lines):
+              raise SystemExit('JerryEagler registry entry already exists in upstream patch')
+          if any(re.search(r',\\s*102(?:,|\\);)', line) for line in lines if 'addMapping(' in line):
+              raise SystemExit('Entity ID 102 is already used in EntityList mapping patch')
+
+          wolf_indexes = [i for i, line in enumerate(lines) if 'addMapping(EntityWolf.class, EntityWolf::new, "Wolf", 95,' in line]
+          if len(wolf_indexes) != 1:
+              raise SystemExit('Expected exactly one EntityWolf registry mapping; found %d' % len(wolf_indexes))
+
+          mapping = '~ \\t\\taddMapping(net.minecraft.entity.passive.EntityJerry.class, net.minecraft.entity.passive.EntityJerry::new, "JerryEagler", 102);'
+          lines.insert(wolf_indexes[0] + 1, mapping)
+
+          patched = '\\n'.join(lines) + '\\n'
+          entity_list.write_text(patched, encoding='utf-8', newline='\\n')
+
+          # Verify that the Eagler BuildTools implementation supports source-file recreation.
+          diffset = root / 'buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/diff/DiffSet.java'
+          apply_zip = root / 'buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/diff/ApplyPatchesToZip.java'
+          dtext = diffset.read_text(encoding='utf-8')
+          atext = apply_zip.read_text(encoding='utf-8')
+          if 'recreatePattern' not in dtext or 'recreate.put(str' not in dtext:
+              raise SystemExit('BuildTools DiffSet recreate support was not found')
+          if 'diffs.recreate.entrySet()' not in atext:
+              raise SystemExit('BuildTools ApplyPatchesToZip recreate output was not found')
+
+          # Verify the patch maps to the expected Java entry path after removing .recreate.
+          rel = recreate_target.relative_to(patch_root).as_posix()
+          output_path = rel.replace('.recreate.java', '.java')
+          if output_path != 'net/minecraft/entity/passive/EntityJerry.java':
+              raise SystemExit('Unexpected recreated Java output path: ' + output_path)
+
+          if 'JerryEagler' not in patched or 'EntityJerry::new' not in patched:
+              raise SystemExit('EntityList registry line was not written')
+          if len([line for line in lines if 'JerryEagler' in line]) != 1:
+              raise SystemExit('JerryEagler registry mapping is duplicated')
+
+          Path('prepared').mkdir(exist_ok=True)
+          report = [
+              '# JerryEagler 0.1 source patch validation',
+              '',
+              '- Eagler source ZIP SHA-256 verified.',
+              '- New source patch copied to patches/minecraft/net/minecraft/entity/passive/EntityJerry.recreate.java.',
+              '- BuildTools DiffSet supports .recreate files and ApplyPatchesToZip writes recreated entries.',
+              '- Expected generated source path: ' + output_path,
+              '- EntityList registry entry: JerryEagler, numeric ID 102.',
+              '- ID 102 was not present in the existing EntityList patch mappings.',
+              '- Existing EntityWolf renderer fallback will render this subclass with the vanilla wolf model and texture.',
+              '- This check validates patch structure only; it does not compile the complete Minecraft workspace or produce a playable client.',
+              ''
+          ]
+          Path('prepared/JERRY_PATCH_VALIDATION.md').write_text('\\n'.join(report), encoding='utf-8')
+
+          # Package just the Jerry patch overlay, including the updated upstream EntityList patch.
+          package_root = Path('prepared/JerryEagler')
+          dst_entity = package_root / 'patches/minecraft/net/minecraft/entity/passive/EntityJerry.recreate.java'
+          dst_entity.parent.mkdir(parents=True, exist_ok=True)
+          dst_entity.write_bytes(source.read_bytes())
+          dst_list = package_root / 'patches/minecraft/net/minecraft/entity/EntityList.edit.java'
+          dst_list.parent.mkdir(parents=True, exist_ok=True)
+          dst_list.write_text(patched, encoding='utf-8')
+          readme = Path('JerryEagler/README.md').read_text(encoding='utf-8')
+          (package_root / 'README.md').write_text(readme, encoding='utf-8')
+          PY
+
+      - name: Compile Java syntax smoke test with 1.8 API stubs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p smoke/src/net/minecraft/world smoke/src/net/minecraft/entity/passive smoke/classes
+          cat > smoke/src/net/minecraft/world/World.java <<'JAVA'
+          package net.minecraft.world;
+          public class World {}
+          JAVA
+          cat > smoke/src/net/minecraft/entity/passive/EntityWolf.java <<'JAVA'
+          package net.minecraft.entity.passive;
+          import net.minecraft.world.World;
+          public class EntityWolf {
+              public EntityWolf(World worldIn) {}
+              public void setCustomNameTag(String name) {}
+              public void setAlwaysRenderNameTag(boolean value) {}
+          }
+          JAVA
+          javac -encoding UTF-8 -d smoke/classes \
+            smoke/src/net/minecraft/world/World.java \
+            smoke/src/net/minecraft/entity/passive/EntityWolf.java \
+            prepared/JerryEagler/patches/minecraft/net/minecraft/entity/passive/EntityJerry.recreate.java
+          echo 'Java syntax smoke test passed against minimal Minecraft 1.8 API stubs.' >> prepared/JERRY_PATCH_VALIDATION.md
+
+      - name: Create JerryEagler source patch package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd prepared
+          zip -qr JerryEagler-source-patch-v0.1.0.zip JerryEagler JERRY_PATCH_VALIDATION.md
+          sha256sum JerryEagler-source-patch-v0.1.0.zip > JerryEagler-source-patch-v0.1.0.zip.sha256
+
+      - name: Upload patch package and validation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: JerryEagler-source-patch-v0.1.0
+          path: |
+            prepared/JerryEagler-source-patch-v0.1.0.zip
+            prepared/JerryEagler-source-patch-v0.1.0.zip.sha256
+            prepared/JERRY_PATCH_VALIDATION.md
+          if-no-files-found: error
+          retention-days: 14
