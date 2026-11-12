@@ -44,12 +44,12 @@ jobs:
           python - <<'PY'
           import re
           import zipfile
+          import shutil
           from pathlib import Path
 
           archive = Path('eagler-main.zip')
           work = Path('work')
           if work.exists():
-              import shutil
               shutil.rmtree(work)
           work.mkdir()
           with zipfile.ZipFile(archive) as z:
@@ -70,27 +70,37 @@ jobs:
               raise SystemExit('Upstream EntityList.edit.java was not found in the supplied archive')
           lines = entity_list.read_text(encoding='utf-8').splitlines()
 
-          header_re = re.compile(r'^(> CHANGE\\s+29\\s*:\\s*)97(\\s*@\\s*29\\s*:\\s*91\\s*)$')
-          header_indexes = [i for i, line in enumerate(lines) if header_re.match(line)]
-          if len(header_indexes) != 1:
-              raise SystemExit('Expected exactly one EntityList mapping hunk header (CHANGE 29:97 @ 29:91); found %d' % len(header_indexes))
-          h = header_indexes[0]
-          lines[h] = header_re.sub(r'\\g<1>98\\g<2>', lines[h])
-
           if any('JerryEagler' in line for line in lines):
               raise SystemExit('JerryEagler registry entry already exists in upstream patch')
-          if any(re.search(r',\\s*102(?:,|\\);)', line) for line in lines if 'addMapping(' in line):
-              raise SystemExit('Entity ID 102 is already used in EntityList mapping patch')
 
-          wolf_indexes = [i for i, line in enumerate(lines) if 'addMapping(EntityWolf.class, EntityWolf::new, "Wolf", 95,' in line]
+          wolf_indexes = [i for i, line in enumerate(lines)
+                          if 'addMapping(EntityWolf.class, EntityWolf::new, "Wolf", 95,' in line]
           if len(wolf_indexes) != 1:
               raise SystemExit('Expected exactly one EntityWolf registry mapping; found %d' % len(wolf_indexes))
+          wolf_index = wolf_indexes[0]
 
-          mapping = '~ \\t\\taddMapping(net.minecraft.entity.passive.EntityJerry.class, net.minecraft.entity.passive.EntityJerry::new, "JerryEagler", 102);'
-          lines.insert(wolf_indexes[0] + 1, mapping)
+          if any(re.search(r',\s*102(?:,|\);)', line) for line in lines if 'addMapping(' in line):
+              raise SystemExit('Entity ID 102 is already used in EntityList mapping patch')
 
-          patched = '\\n'.join(lines) + '\\n'
-          entity_list.write_text(patched, encoding='utf-8', newline='\\n')
+          # Find the CHANGE hunk containing the wolf mapping and increase its output-line count.
+          hunk_indexes = [i for i, line in enumerate(lines[:wolf_index])
+                          if re.match(r'^> CHANGE\s+\d+\s*:\s*\d+\s*@\s*\d+\s*:\s*\d+\s*$', line)]
+          if not hunk_indexes:
+              raise SystemExit('Could not find the CHANGE hunk containing the EntityWolf mapping')
+          h = hunk_indexes[-1]
+          match = re.match(r'^> CHANGE\s+(\d+)\s*:\s*(\d+)\s*@\s*(\d+)\s*:\s*(\d+)\s*$', lines[h])
+          if not match:
+              raise SystemExit('Could not parse EntityList CHANGE hunk header: ' + lines[h])
+          old_output_count = int(match.group(2))
+          lines[h] = '> CHANGE %s : %d @ %s : %s' % (
+              match.group(1), old_output_count + 1, match.group(3), match.group(4)
+          )
+
+          mapping = '~ \t\taddMapping(net.minecraft.entity.passive.EntityJerry.class, net.minecraft.entity.passive.EntityJerry::new, "JerryEagler", 102);'
+          lines.insert(wolf_index + 1, mapping)
+
+          patched = '\n'.join(lines) + '\n'
+          entity_list.write_text(patched, encoding='utf-8', newline='\n')
 
           # Verify that the Eagler BuildTools implementation supports source-file recreation.
           diffset = root / 'buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/diff/DiffSet.java'
@@ -102,12 +112,10 @@ jobs:
           if 'diffs.recreate.entrySet()' not in atext:
               raise SystemExit('BuildTools ApplyPatchesToZip recreate output was not found')
 
-          # Verify the patch maps to the expected Java entry path after removing .recreate.
           rel = recreate_target.relative_to(patch_root).as_posix()
           output_path = rel.replace('.recreate.java', '.java')
           if output_path != 'net/minecraft/entity/passive/EntityJerry.java':
               raise SystemExit('Unexpected recreated Java output path: ' + output_path)
-
           if 'JerryEagler' not in patched or 'EntityJerry::new' not in patched:
               raise SystemExit('EntityList registry line was not written')
           if len([line for line in lines if 'JerryEagler' in line]) != 1:
@@ -127,9 +135,8 @@ jobs:
               '- This check validates patch structure only; it does not compile the complete Minecraft workspace or produce a playable client.',
               ''
           ]
-          Path('prepared/JERRY_PATCH_VALIDATION.md').write_text('\\n'.join(report), encoding='utf-8')
+          Path('prepared/JERRY_PATCH_VALIDATION.md').write_text('\n'.join(report), encoding='utf-8')
 
-          # Package just the Jerry patch overlay, including the updated upstream EntityList patch.
           package_root = Path('prepared/JerryEagler')
           dst_entity = package_root / 'patches/minecraft/net/minecraft/entity/passive/EntityJerry.recreate.java'
           dst_entity.parent.mkdir(parents=True, exist_ok=True)
