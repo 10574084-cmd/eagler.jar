@@ -43,10 +43,10 @@ jobs:
           import re
 
           inspect_root = Path('inspect')
-          buildtools_dirs = [p for p in inspect_root.rglob('buildtools') if p.is_dir()]
-          if len(buildtools_dirs) != 1:
-              raise SystemExit('Expected exactly one buildtools directory; found: ' + ', '.join(str(p) for p in buildtools_dirs))
-          root = buildtools_dirs[0].parent
+          mcp_dirs = [p for p in inspect_root.rglob('mcp918') if p.is_dir()]
+          if len(mcp_dirs) != 1:
+              raise SystemExit('Expected exactly one mcp918 directory; found: ' + ', '.join(str(p) for p in mcp_dirs))
+          root = mcp_dirs[0].parent
           out = []
           def add(value=''):
               out.append(str(value))
@@ -63,15 +63,12 @@ jobs:
 
           section('MCP 1.8.8 folder inventory')
           mcp = root / 'mcp918'
-          if not mcp.is_dir():
-              add('mcp918 directory: MISSING')
-          else:
-              files = sorted(p for p in mcp.rglob('*') if p.is_file())
-              add('- Files: %d' % len(files))
-              for p in files[:250]:
-                  add('- ' + p.relative_to(root).as_posix() + ' (%d bytes)' % p.stat().st_size)
-              if len(files) > 250:
-                  add('- ... %d additional files omitted' % (len(files) - 250))
+          files = sorted(p for p in mcp.rglob('*') if p.is_file())
+          add('- Files: %d' % len(files))
+          for p in files[:250]:
+              add('- ' + p.relative_to(root).as_posix() + ' (%d bytes)' % p.stat().st_size)
+          if len(files) > 250:
+              add('- ... %d additional files omitted' % (len(files) - 250))
 
           section('Build and initialization scripts')
           script_names = ('build_init.sh', 'build_make_workspace.sh', 'build_init.bat', 'build_make_workspace.bat', 'README.md', 'README.txt')
