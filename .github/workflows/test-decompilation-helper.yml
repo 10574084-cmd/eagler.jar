@@ -57,9 +57,9 @@ jobs:
           fi
 
           # With mock files, verify it hands off to BuildTools init without doing a real decompilation.
-          : > "$fixture/mcp918/mcp918.zip"
-          : > "$fixture/mcp918/1.8.8.jar"
-          : > "$fixture/mcp918/1.8.json"
+          printf 'mock MCP archive\n' > "$fixture/mcp918/mcp918.zip"
+          printf 'mock Minecraft jar\n' > "$fixture/mcp918/1.8.8.jar"
+          printf '{}\n' > "$fixture/mcp918/1.8.json"
           bash scripts/decompile-eagler-private.sh "$fixture"
           grep -F -- '-version' "$JAVA_CALL_LOG"
           grep -F -- "-jar $fixture/buildtools/BuildTools.jar init" "$JAVA_CALL_LOG"
