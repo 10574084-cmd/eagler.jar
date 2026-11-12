@@ -10,7 +10,7 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Checkout analysis branch
         uses: actions/checkout@v4
@@ -21,95 +21,99 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Download release assets and verify checksums
+      - name: Download Jerry JAR and verify checksum
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/jerryeagler
           curl --fail --location --retry 3 --retry-delay 3 'https://github.com/10574084-cmd/eagler.jar/releases/download/CLAUDEORGROK/jerry.jar.jar' -o /tmp/jerryeagler/jerry.jar
-          curl --fail --location --retry 3 --retry-delay 3 'https://github.com/10574084-cmd/eagler.jar/releases/download/CLAUDEORGROK/eagler-main.zip' -o /tmp/jerryeagler/eagler-main.zip
           echo 'db4e534a5fea9e51d55bf7c4f1969ffaf2dad4c22dfd8732c1875e92360cfdb8  /tmp/jerryeagler/jerry.jar' | sha256sum --check
-          echo '6dd5070cb6b3743e4437f52183d8083019b62d8fa74bf84d55f2d397897d1c5c  /tmp/jerryeagler/eagler-main.zip' | sha256sum --check
-      - name: Inspect archive structure
+      - name: Decompile privately for structural audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 'https://repo1.maven.org/maven2/org/benf/cfr/0.152/cfr-0.152.jar' -o /tmp/jerryeagler/cfr.jar
+          java -Xmx4g -jar /tmp/jerryeagler/cfr.jar /tmp/jerryeagler/jerry.jar --outputdir /tmp/jerryeagler/decompiled --silent true
+      - name: Create sanitized class and mixin audit
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
-          import zipfile, os, collections
+          import zipfile, json, re
           from pathlib import Path
+          jar_path = Path('/tmp/jerryeagler/jerry.jar')
+          dec = Path('/tmp/jerryeagler/decompiled')
           out = []
-          def section(s): out.append("\n## " + s + "\n")
-          def line(s=""): out.append(str(s))
-          jar_path = "/tmp/jerryeagler/jerry.jar"
-          eagler_path = "/tmp/jerryeagler/eagler-main.zip"
-          section("Jerry JAR integrity and contents")
+          def add(s=''): out.append(str(s))
+          def section(s): add('\\n## ' + s + '\\n')
+
           with zipfile.ZipFile(jar_path) as z:
-              infos = z.infolist()
-              names = [i.filename for i in infos if not i.is_dir()]
-              line(f"- Archive entries: {len(names)}")
-              line(f"- Downloaded size: {os.path.getsize(jar_path):,} bytes")
-              counts = collections.Counter(Path(n).suffix.lower() or "(no extension)" for n in names)
-              line("- File type counts:")
-              for ext, count in counts.most_common(20): line(f"  - {ext}: {count}")
-              classes = [n for n in names if n.endswith(".class")]
-              line(f"- Java bytecode classes: {len(classes)}")
-              roots = collections.Counter(n.split("/")[0] for n in classes if "/" in n)
-              line("- Class package roots:")
-              for root, count in roots.most_common(30): line(f"  - {root}: {count}")
-              line("- Mod metadata:")
-              for n in names:
-                  if n.endswith(("META-INF/mods.toml", "META-INF/MANIFEST.MF", "pack.mcmeta", "fabric.mod.json")):
-                      line(f"### {n}")
-                      try:
-                          data = z.read(n).decode("utf-8", "replace")
-                          line(data[:10000])
-                      except Exception as e: line(f"(could not read: {e})")
-              assets = [n for n in names if n.lower().endswith((".png",".jpg",".jpeg",".ogg",".wav",".mp3",".json",".geo.json",".mcmeta"))]
-              line(f"- Resource files: {len(assets)}")
-              line("- Sample resource paths:")
-              for n in assets[:100]: line(f"  - {n}")
-              big = sorted((i for i in infos if not i.is_dir()), key=lambda i:i.file_size, reverse=True)[:20]
-              line("- Largest archive entries:")
-              for i in big: line(f"  - {i.filename} — {i.file_size:,} bytes")
-          section("Eaglercraft ZIP source inventory")
-          with zipfile.ZipFile(eagler_path) as z:
-              names = [n for n in z.namelist() if not n.endswith("/")]
-              line(f"- Archive entries: {len(names)}")
-              line(f"- Downloaded size: {os.path.getsize(eagler_path):,} bytes")
-              counts = collections.Counter(Path(n).suffix.lower() or "(no extension)" for n in names)
-              line("- File type counts:")
-              for ext, count in counts.most_common(25): line(f"  - {ext}: {count}")
-              line("- Top-level paths:")
-              for root in sorted({n.split("/")[0] for n in names})[:100]: line(f"  - {root}")
-              line("- Likely build/source entrypoints:")
-              candidates = [n for n in names if Path(n).name.lower() in {
-                  "readme.md","build.gradle","settings.gradle","gradlew","pom.xml",
-                  "package.json","webpack.config.js","tsconfig.json","manifest.json"
-              } or n.lower().endswith((".java",".gradle",".js",".ts",".json"))]
-              for n in candidates[:180]: line(f"  - {n}")
-          section("Initial compatibility notes")
-          line("- Jerry is packaged for Minecraft 1.20.1 Forge; Eaglercraft 1.8 is a different Minecraft generation and runtime.")
-          line("- A Forge mod JAR cannot be installed directly as an Eaglercraft client add-on. Its entity, AI, rendering, sound and resource behavior must be recreated against the Eagler codebase.")
-          line("- This report lists archive metadata and filenames only; it does not publish decompiled source or copyrighted assets.")
-          Path("JERRY_ANALYSIS.md").write_text("\n".join(out) + "\n", encoding="utf-8")
+              names = [n for n in z.namelist() if not n.endswith('/')]
+              classes = sorted(n[:-6].replace('/', '.') for n in names if n.endswith('.class'))
+              add('# Jerry JAR — class and integration audit')
+              add()
+              add('- Archive bytecode classes: %d' % len(classes))
+              add('- Decompiled Java files: %d' % len(list(dec.rglob('*.java'))))
+              section('Mixin configuration')
+              mixins = [n for n in names if n.endswith('.mixins.json')]
+              for n in mixins:
+                  add('### ' + n)
+                  try:
+                      obj = json.loads(z.read(n).decode('utf-8', 'replace'))
+                      add('\\x60\\x60\\x60json')
+                      add(json.dumps(obj, indent=2)[:12000])
+                      add('\\x60\\x60\\x60')
+                  except Exception as e: add('Read error: ' + str(e))
+              section('Class inventory')
+              for n in classes: add('- \\x60' + n + '\\x60')
+
+          section('Feature-relevant class names')
+          terms = ('mod','entity','jerry','dog','wolf','cat','mob','ai','goal','renderer','render','model','sound','voice','dimension','world','block','item','screen','client','server','mixin','network','registry','shader','camera','animation')
+          selected = [n for n in classes if any(t in n.lower() for t in terms)]
+          for n in selected: add('- \\x60' + n + '\\x60')
+
+          section('Entrypoints, mixin declarations, and registry indicators')
+          java_files = sorted(dec.rglob('*.java'))
+          needles = ('@Mod(', '@Mixin(', 'DeferredRegister', 'RegistryObject', 'EntityType.Builder', 'EntityRenderer', 'ModelLayerLocation', 'SoundEvent', 'SpawnPlacements', 'RegisterEvent', 'RegisterCommandsEvent')
+          hits = []
+          for fp in java_files:
+              try: lines = fp.read_text(encoding='utf-8', errors='replace').splitlines()
+              except Exception: continue
+              for idx, ln in enumerate(lines):
+                  if any(k in ln for k in needles):
+                      hits.append((str(fp.relative_to(dec)), idx + 1, ln.strip()))
+          for fp, lnno, ln in hits[:250]:
+              add('- \\x60%s:%d\\x60 — %s' % (fp, lnno, ln[:220]))
+          if len(hits) > 250: add('- ... %d additional indicator matches omitted' % (len(hits)-250))
+
+          section('Resource path inventory')
+          with zipfile.ZipFile(jar_path) as z:
+              resources = [n for n in z.namelist() if n.startswith('assets/jerry/') and not n.endswith('/')]
+              for n in sorted(resources): add('- \\x60' + n + '\\x60')
+
+          section('Portability assessment')
+          add('- The metadata identifies a Forge 1.20.1 mod with Mixin configuration. These hooks and APIs do not load directly in Eaglercraft 1.8.')
+          add('- This file is a structural audit only: it does not include decompiled method bodies or copy source/assets.')
+          add('- The practical target should be scoped to the core Jerry entity and its core behavior first. Mod-specific dimensions, custom post-processing shaders, native voice/model dependencies, cinematic data, and Mixin-only hooks require separate feasibility review.')
+          Path('JERRY_CLASS_AUDIT.md').write_text('\\n'.join(out) + '\\n', encoding='utf-8')
           PY
-      - name: Publish report to analysis branch
+      - name: Publish audits to analysis branch
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add JERRY_ANALYSIS.md
+          git add JERRY_CLASS_AUDIT.md
           if git diff --cached --quiet; then
-            echo 'No report changes.'
+            echo 'No audit changes.'
           else
-            git commit -m 'Add Jerry and Eagler archive inspection report'
+            git commit -m 'Add Jerry class and mixin compatibility audit'
             git push origin jerryeagler-analysis
           fi
-      - name: Upload inspection report
+      - name: Upload sanitized audit
         uses: actions/upload-artifact@v4
         with:
-          name: jerryeagler-inspection
-          path: JERRY_ANALYSIS.md
+          name: jerryeagler-class-audit
+          path: JERRY_CLASS_AUDIT.md
           if-no-files-found: error
           retention-days: 14
