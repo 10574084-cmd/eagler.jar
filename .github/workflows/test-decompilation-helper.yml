@@ -1,0 +1,66 @@
+name: Test private decompilation helper
+
+on:
+  push:
+    branches:
+      - jerryeagler-analysis
+    paths:
+      - "scripts/decompile-eagler-private.sh"
+      - "DECOMPILACION.md"
+      - ".github/workflows/test-decompilation-helper.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-helper:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout analysis branch
+        uses: actions/checkout@v4
+        with:
+          ref: jerryeagler-analysis
+
+      - name: Check shell syntax
+        run: bash -n scripts/decompile-eagler-private.sh
+
+      - name: Test missing-input guard and command handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/fake-eagler-main"
+          fakebin="$RUNNER_TEMP/fake-bin"
+          export JAVA_CALL_LOG="$RUNNER_TEMP/java-calls.log"
+          mkdir -p "$fixture/buildtools" "$fixture/mcp918" "$fakebin"
+          printf 'mock BuildTools placeholder\n' > "$fixture/buildtools/BuildTools.jar"
+
+          cat > "$fakebin/java" <<'JAVA'
+          #!/usr/bin/env bash
+          printf '%s\n' "$*" >> "$JAVA_CALL_LOG"
+          exit 0
+          JAVA
+          chmod +x "$fakebin/java"
+          export PATH="$fakebin:$PATH"
+
+          # Missing private inputs must stop before Java/BuildTools is invoked.
+          if bash scripts/decompile-eagler-private.sh "$fixture" > "$RUNNER_TEMP/missing.log" 2>&1; then
+            echo "Expected the helper to reject missing private inputs." >&2
+            exit 1
+          fi
+          grep -q 'mcp918.zip' "$RUNNER_TEMP/missing.log"
+          grep -q '1.8.8.jar' "$RUNNER_TEMP/missing.log"
+          grep -q '1.8.json' "$RUNNER_TEMP/missing.log"
+          if [[ -s "$JAVA_CALL_LOG" ]]; then
+            echo "Java should not run when required inputs are missing." >&2
+            exit 1
+          fi
+
+          # With mock files, verify it hands off to BuildTools init without doing a real decompilation.
+          : > "$fixture/mcp918/mcp918.zip"
+          : > "$fixture/mcp918/1.8.8.jar"
+          : > "$fixture/mcp918/1.8.json"
+          bash scripts/decompile-eagler-private.sh "$fixture"
+          grep -F -- '-version' "$JAVA_CALL_LOG"
+          grep -F -- "-jar $fixture/buildtools/BuildTools.jar init" "$JAVA_CALL_LOG"
+          echo "Private decompilation helper tests passed (BuildTools was mocked)."
