@@ -109,6 +109,28 @@ jobs:
           for name in sorted(found)[:250]:
               add('- ' + name)
 
+          section('Headless compile config and initialization code excerpts')
+          detail_specs = [
+              ('buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/gui/headless/CompileLatestClientHeadless.java', [(80, 220), (260, 360), (380, 530)]),
+              ('buildtools/src/main/java/net/lax1dude/eaglercraft/v1_8/buildtools/task/init/InitTask.java', [(35, 150)]),
+              ('mcp918/readme.txt', [(1, 80)]),
+              ('CompileLatestClient.sh', [(1, 80)]),
+              ('CompileLatestClient.bat', [(1, 80)])
+          ]
+          for rel, ranges in detail_specs:
+              p = root / rel
+              if not p.is_file():
+                  add('MISSING: ' + rel)
+                  continue
+              add('### ' + rel)
+              lines = p.read_text(encoding='utf-8', errors='replace').splitlines()
+              for start, end in ranges:
+                  add('Lines %d-%d:' % (start, end))
+                  add('\n'.join('%d: %s' % (i+1, lines[i]) for i in range(start-1, min(end, len(lines)))))
+          section('BuildTools packaged binaries')
+          for p in sorted((root / 'buildtools').rglob('*.jar')):
+              add('- %s (%d bytes)' % (p.relative_to(root).as_posix(), p.stat().st_size))
+
           section('Minecraft initialization references')
           hits = []
           for p in root.rglob('*'):
