@@ -117,3 +117,76 @@ jobs:
           path: JERRY_CLASS_AUDIT.md
           if-no-files-found: error
           retention-days: 14
+
+      - name: Download Eagler source ZIP and inspect entity patch format
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 3 'https://github.com/10574084-cmd/eagler.jar/releases/download/CLAUDEORGROK/eagler-main.zip' -o /tmp/jerryeagler/eagler-main.zip
+          echo '6dd5070cb6b3743e4437f52183d8083019b62d8fa74bf84d55f2d397897d1c5c  /tmp/jerryeagler/eagler-main.zip' | sha256sum --check
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          zpath = '/tmp/jerryeagler/eagler-main.zip'
+          out = []
+          def add(s=''): out.append(str(s))
+          def sec(s): add('\\n## ' + s + '\\n')
+          with zipfile.ZipFile(zpath) as z:
+              names = [n for n in z.namelist() if not n.endswith('/')]
+              add('# Eaglercraft entity patch integration audit')
+              add()
+              add('This report inspects only the user-provided Eaglercraft source archive.')
+              add('- Files in ZIP: %d' % len(names))
+              sec('Relevant entity and renderer patch paths')
+              terms = ('EntityList', 'RenderManager', 'EntityWolf', 'ModelWolf', 'RenderWolf', 'EntityOcelot', 'RenderOcelot', 'ModelOcelot')
+              selected = [n for n in names if any(t.lower() in n.lower() for t in terms)]
+              for n in selected: add('- ' + n)
+              sec('Patch file formats')
+              for ext in ('.edit.java', '.recreate.java', '.delete'):
+                  matches = [n for n in names if n.endswith(ext)]
+                  add('- %s: %d' % (ext, len(matches)))
+                  for n in matches[:20]: add('  - ' + n)
+              sec('Top-level README')
+              readmes = [n for n in names if n.lower().endswith('readme.md')]
+              for n in readmes[:5]:
+                  add('### ' + n)
+                  try:
+                      txt = z.read(n).decode('utf-8', 'replace')
+                      add(txt[:18000])
+                  except Exception as e: add(str(e))
+              sec('EntityList / RenderManager / wolf patch excerpts')
+              for n in selected:
+                  if n.endswith(('.java', '.ebp')):
+                      add('### ' + n)
+                      try:
+                          txt = z.read(n).decode('utf-8', 'replace')
+                          add(txt[:24000])
+                      except Exception as e: add('Could not decode: ' + str(e))
+              sec('Example recreate patches')
+              recreates = sorted(n for n in names if n.endswith('.recreate.java'))
+              for n in recreates[:8]:
+                  add('### ' + n)
+                  try:
+                      add(z.read(n).decode('utf-8', 'replace')[:3500])
+                  except Exception as e: add(str(e))
+              sec('DiffSet implementation clues')
+              diffsets = [n for n in names if n.endswith('/DiffSet.java')]
+              for n in diffsets[:3]:
+                  add('### ' + n)
+                  txt = z.read(n).decode('utf-8', 'replace').splitlines()
+                  hits = [i for i, ln in enumerate(txt) if 'recreate' in ln.lower() or 'edit.java' in ln.lower() or 'patch' in ln.lower()]
+                  chosen = set()
+                  for i in hits[:25]:
+                      chosen.update(range(max(0, i-5), min(len(txt), i+8)))
+                  for i in sorted(chosen): add('%d: %s' % (i+1, txt[i]))
+          Path('EAGLER_ENTITY_INTEGRATION.md').write_text('\\n'.join(out) + '\\n', encoding='utf-8')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add EAGLER_ENTITY_INTEGRATION.md
+          if git diff --cached --quiet; then
+            echo 'No Eagler integration report changes.'
+          else
+            git commit -m 'Add Eagler entity patch integration audit'
+            git push origin jerryeagler-analysis
+          fi
