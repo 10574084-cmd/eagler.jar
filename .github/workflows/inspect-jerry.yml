@@ -34,6 +34,62 @@ jobs:
           set -euo pipefail
           curl --fail --location --retry 3 'https://repo1.maven.org/maven2/org/benf/cfr/0.152/cfr-0.152.jar' -o /tmp/jerryeagler/cfr.jar
           java -Xmx4g -jar /tmp/jerryeagler/cfr.jar /tmp/jerryeagler/jerry.jar --outputdir /tmp/jerryeagler/decompiled --silent true
+      - name: Inspect core Jerry bytecode signatures and related resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/jerryeagler/api
+          for cls in com.pkfl.jerry.jerry com.pkfl.jerry.entity.companion com.pkfl.jerry.client.canine com.pkfl.jerry.entity.cub com.pkfl.jerry.entity.hound; do
+            safe=$(echo "$cls" | tr '.' '_')
+            javap -classpath /tmp/jerryeagler/jerry.jar -p -s -constants "$cls" > "/tmp/jerryeagler/api/$safe.txt" 2>&1 || true
+          done
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          api = Path('/tmp/jerryeagler/api')
+          out = [
+              '# Jerry core bytecode API audit',
+              '',
+              'This is a signature-only inspection of the supplied JAR. No method bodies or decompiled source are included.',
+              ''
+          ]
+          for p in sorted(api.glob('*.txt')):
+              out.append('## ' + p.stem.replace('_','.'))
+              txt = p.read_text(encoding='utf-8', errors='replace').splitlines()
+              keep = []
+              for ln in txt:
+                  if any(k in ln for k in ('Compiled from', 'public class ', 'final class ', 'abstract class ', 'extends ', 'implements ', 'public static ', 'public ', 'protected ', 'private ', 'descriptor:')):
+                      keep.append(ln)
+              out.extend(keep[:180])
+              out.append('')
+          with zipfile.ZipFile('/tmp/jerryeagler/jerry.jar') as z:
+              names = [n for n in z.namelist() if not n.endswith('/')]
+              related = [n for n in names if n.startswith('assets/jerry/') and any(k in n.lower() for k in ('jerry','canine','companion','dog','wolf','entity','geo','mesh','texture','pixel','animation'))]
+              out.append('## Resource paths likely related to Jerry, canine models, or animation')
+              out.append('')
+              for n in sorted(related):
+                  out.append('- ' + n)
+              out.append('')
+              out.append('## Resource summary')
+              out.append('- Related resource paths found: %d' % len(related))
+              ext_counts = {}
+              for n in related:
+                  ext = Path(n).suffix.lower() or '(none)'
+                  ext_counts[ext] = ext_counts.get(ext, 0) + 1
+              for ext, count in sorted(ext_counts.items()):
+                  out.append('- %s: %d' % (ext, count))
+          Path('JERRY_CORE_API.md').write_text('\\n'.join(out) + '\\n', encoding='utf-8')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add JERRY_CORE_API.md
+          if git diff --cached --quiet; then
+            echo 'No core API audit changes.'
+          else
+            git commit -m 'Add Jerry core entity and renderer API audit'
+            git push origin jerryeagler-analysis
+          fi
+
       - name: Create sanitized class and mixin audit
         shell: bash
         run: |
