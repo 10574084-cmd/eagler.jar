@@ -68,3 +68,27 @@ This confirms that 0.1.0 is a native compatibility stub, not a source-level port
 5. **0.5 — full client integration:** requires the actual Eagler BuildTools workspace inputs (Minecraft 1.8/MCP initialization artifacts and resources), which are not present in the supplied ZIP. Build and test on that complete workspace.
 
 The browser output is a modified Eagler client build, not a Forge-style plugin JAR. The current deliverable is a BuildTools source-patch ZIP, not a playable client or an installable `.eagler` add-on.
+
+
+## 0.2.0 milestone — native model and renderer prototype
+
+GitHub Actions run 43292374914 completed successfully and uploaded artifact `JerryEagler-source-patch-v0.2.0`.
+
+Included in the verified package:
+- `EntityJerry.recreate.java`: new entity class extending the 1.8 wolf implementation.
+- `ModelJerry.recreate.java`: native 1.8 model subclass with small pose/idle adjustments.
+- `RenderJerry.recreate.java`: native `RenderLiving<EntityJerry>` renderer, using the wolf texture as a temporary placeholder.
+- `EntityList.edit.java`: entity name `JerryEagler`, numeric ID 102.
+- `RenderManager.edit.java`: renderer map insertion after the vanilla wolf renderer entry.
+
+Validation completed:
+- Eagler source ZIP SHA-256 checked.
+- New Java classes compile in a syntax smoke test using minimal 1.8 API stubs.
+- The downloaded package was inspected: the `RenderManager` patch and validation report contain normal newline characters and the expected files.
+- This is not a full Eagler/Minecraft compilation. The supplied source archive omits the decompiled Minecraft 1.8.8/MCP workspace needed to apply the context-restricted RenderManager hunk against the exact target source.
+
+Current visual/gameplay state:
+- Jerry has a dedicated renderer and model class in the patch overlay.
+- The texture remains the vanilla wolf texture; the model still starts from the 1.8 wolf model.
+- Entity movement and AI still inherit from `EntityWolf`.
+- No playable browser client or `.eagler` runtime add-on has been built yet.
